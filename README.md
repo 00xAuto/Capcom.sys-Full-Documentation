@@ -15,7 +15,9 @@ Here is what an SMEP BSOD (Blue screen of death) looks like :
 <img width="523" height="390" alt="image" src="https://github.com/user-attachments/assets/39d38393-4ff9-41f5-9f64-18daee2d57e0" />
 
 
-**The tweet the blew up :**
+
+
+**The tweet that started it all :**
 
 
 https://x.com/thewack0lian/status/779397840762245124
@@ -89,7 +91,7 @@ When we compare the functions in this image to the one in the IDA, we see that t
 
 `lea r9, [rsp]` for instance takes the value of inside rsp to the register r9, **this means that what ever was stored in [rsp+78h+DestinationString] is now in r9 until it's modified.** Which is our target DeviceName for us to be able to call in our POC.
 
-Scrolling down, we see that there is an IoCreateSymbolicLink call, which is creating the "\\\\.\\DeviceName" part, this means that right after that function, the real DeviceName is now officially stored in a register, looking more into it, we see that the register `rdx` holds the full name for the driver, this will be important for us to remember when we come back to the DeviceName in windbg :
+Scrolling down, we see that there is an IoCreateSymbolicLink call, which is creating the "\\\\.\\DeviceName" part, this means that right after that function, the real DeviceName is now officially stored in a register, looking more into it, we see that the register `r8` holds the full name for the driver, this will be important for us to remember when we come back to the DeviceName in windbg :
 
 <img width="612" height="586" alt="image" src="https://github.com/user-attachments/assets/a1c77d45-64d1-422e-9c72-3a88cd248711" />
 
@@ -109,5 +111,208 @@ Obviously in our case, we will not close the device handle in our exploit just y
 
 <img width="920" height="425" alt="image" src="https://github.com/user-attachments/assets/74a46fd8-8e52-46ea-881b-07fd23fba253" />
 
+
+Going into the first function, we see that it's calling IofCompleteRequest :
+
+<img width="421" height="595" alt="image" src="https://github.com/user-attachments/assets/8c2796df-033f-4012-af15-afce103633f0" />
+
+We can renamed that function to that just so we can recognize it. And from MSDN, The IoCompleteRequest macro indicates that the caller has completed all processing for a given I/O request and is returning the given IRP to the I/O manager.
+
+Where IRP is I/O Packet request.
+
+I will look at sub_1047C before the function in the middle, that's the recommened order in my opinion.
+
+<img width="481" height="615" alt="image" src="https://github.com/user-attachments/assets/3e7d31c1-89fe-4f93-93fb-c3bc3b251dc9" />
+
+
+IoDeleteDevice routine removes a device object from the system, for example, when the underlying device is removed from the system. Meaning that the device cleans up the memory it was using, since the kernel doesn't manage the memory on it's on.
+
+We can rename it and call it DeleteDevice just so we can know that it unloads the driver.
+
+Finally, the best for last, the main function that we will focus on in this blog :
+
+<img width="403" height="236" alt="image" src="https://github.com/user-attachments/assets/fc9b0912-1848-4a1d-900b-21957855c1e2" />
+
+<img width="970" height="678" alt="image" src="https://github.com/user-attachments/assets/6f5f0d27-f22d-4845-b7ed-a082cea295cd" />
+
+This is the function where everything including IOCTL and the vulnerability resides.
+
+Looking at this, we might think that there isn't really much going on, since it's just a bunch of initializations, but after looking around, there is a possibility that the hex values in the image below are the IOCTL codes : 
+
+<img width="683" height="395" alt="image" src="https://github.com/user-attachments/assets/06d7c931-0445-47b2-aa92-5e4b5190b80d" />
+
+
+To further understand what IOCTL codes are, we need to take a step back and look at the Windows API called DeviceIoControl :
+
+https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-deviceiocontrol
+
+<img width="690" height="238" alt="image" src="https://github.com/user-attachments/assets/1644b69c-0040-48db-99c2-419b98853ccf" />
+
+Which takes 8 parameters, and I will be explaining them now.
+
+1. hDevice:  this is the variable the holds that we talked about earlier that holds the CreateFileA.
+2. dwIoControlCode : is the IOCTL code we were just talking about. it's the code that we will be using to send data to the driver. You can think of it as a phone number to call your friend. The "phone number" is the IOCTL code that you will use to contact the driver and send data/buffer.
+3. lpInBuffer : The variable that holds the input buffer (data that will be sent to the driver).
+4. nInBufferSize : Size of the buffer, this can be done but sizeof(var).
+5. lpOutBuffer : This is supposed to be a variable that will hold the output buffer
+6. nOutBufferSize : sizeof of expected output buffer
+7. lpBytesReturned : A pointer to a variable that receives the size of the data stored in the output buffer, in bytes. This is usually done by declaring a variable like this : `DWORD var;` and then this same var will be called as a pointer, `&var`.
+8. lpOverlapped : If we don't have a FILE_FLAG_OVERLAPPED parameter in our CreateFileA (which was passed a NULL), we will pass in a NULL in DeviceIoControl.
+
+Let's now analyze the path from the IOCTL codes and downwards :
+
+<img width="772" height="667" alt="image" src="https://github.com/user-attachments/assets/1d4bce27-d76e-4749-a10d-c303acee0f9b" />
+
+r11 holds the first IOCTL being 0AA012044h which is hardcoded, and is compared down with edx. If true, we will go to the eax funciton :
+
+<img width="479" height="320" alt="image" src="https://github.com/user-attachments/assets/6efa09b4-ce56-4f02-b681-532b86ece066" />
+
+Then IOCTL 0AA013044h is moved into r10, if the comparsion above fails though, we go to `cmp edx, r10d` and if true, we jump to `mov eax, 8` and `lea esi, [rax-4]` where rax holds 8, and 0x8 - 0x4 is 0x04 so esi holds the decimal (or hex for now) value of 4.
+
+Seeing something like this after IOCTL codes should trigger something, or not, It doesn't really matter. But eax and esi here registers that hold parameter values from the expected DeviceIoControl function. They are possbily the expected size of Input/Output for example.
+
+Now, one important question to ask, Which IOCTL do we use if we want to contact the driver ?
+
+If you studied assembly you would know that 'r'ax indicate a 64 bit value, but as for 'e'ax, it indicates a 32 bit value. Most machines today use x64 bits, which means that we will go with the 'r'ax version of the IOCTL code, and if we track it correctly, we will see that only when the condition for IOCTL 0AA012044h fails, it goes to our 'r'ax instruction : 
+
+<img width="665" height="447" alt="image" src="https://github.com/user-attachments/assets/ef4602e8-3e41-4191-b5e2-10d5c7c9b873" />
+
+
+Scrolling further down, we see that there are more checks and conditions : 
+
+<img width="775" height="585" alt="image" src="https://github.com/user-attachments/assets/0d15270c-3234-45e0-8f53-97d98559716a" />
+
+Enough analyzing (for now). Let's start debugging and talking to the driver.
+
+## 0x02. Windbg + Driver Communication
+
+You are expected to have the debugging env.
+
+Let's now note what we gathered from the analysis as a recap before we jump into work : 
+- We found that at the IoCreateSymbolicLink, the DeviceName should be finally in rdx in plaintext at 0x707
+- IOCTL 0x0AA013044 is what we will be using to talk to the driver
+- We need to note the size of the data we input when talking to the driver (in our poc).
+
+Let's now start windbg :
+
+<img width="1038" height="366" alt="image" src="https://github.com/user-attachments/assets/d6a336c7-ac44-4fd8-bea1-c58a0cb5c36d" />
+
+
+Let's set a breakpoint at the start of Capcom.sys by first pressing "break", then typing : `sxe ld Capcom` and then go again :
+
+<img width="562" height="725" alt="image" src="https://github.com/user-attachments/assets/a11aa385-c2e5-4ce0-9f71-512980404791" />
+
+<img width="1894" height="844" alt="image" src="https://github.com/user-attachments/assets/fe796e4f-c556-4b51-a02e-d7151698f085" />
+
+Now that we are in a breakpoint, let's set a break point at Capcom+0x707 and read the value in r8 :
+
+<img width="693" height="283" alt="image" src="https://github.com/user-attachments/assets/d5249c4d-e0d0-471a-a3ef-d0106c0442b3" />
+
+And we now have the driver name being "Htsysm72FB".
+
+So if we were to call that driver in CreateFileA, we would call it like this : "\\\\.\\Htsysm72FB".
+
+Since now we have the IOCTL code, driver name, an idea about the possibilities of size of buffer, and the conditions, the best thing we could is just jump to the editor now :
+
+<img width="903" height="738" alt="image" src="https://github.com/user-attachments/assets/122fc217-bee3-4a52-b2da-2702b0f7c0a2" />
+
+Don't let this overwhelm you, it exactly what we discusssed. Libraries imported are the libraries we are supposed to use, can found in the title :
+
+<img width="932" height="653" alt="image" src="https://github.com/user-attachments/assets/e9c85ec8-121f-40c4-9ffa-afbc1876d094" />
+
+The if statement
+
+```cpp
+	if (hDevice == INVALID_HANDLE_VALUE) {
+		printf("[-] Driver didn't load successfully, Error : %d\n", GetLastError());
+	}
+	else {
+		printf("[+] Driver was loaded.");
+	}
+```
+This checks if the HANDLE is valid or not, if not (the if condition), we will print driver didn't load and print an error (GetLast error shows the error in Decimal).
+
+Incase of error codes, this will be helpful to troubleshoot the issue : https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+
+Let's now attempt to run the binary in the victim : 
+
+<img width="302" height="100" alt="image" src="https://github.com/user-attachments/assets/ef70c9cc-913d-4411-8591-a14476498f17" />
+
+Driver was loaded with no issues, now, to see if our data was passed or not, we will need to break anywhere before the IOCTLs start, say 0x590 as show below :
+
+<img width="733" height="515" alt="image" src="https://github.com/user-attachments/assets/95733285-168b-4643-8e07-b67cc21a082b" />
+
+We will now set a break point at Capcom+0x590 in windbg :
+
+<img width="983" height="452" alt="image" src="https://github.com/user-attachments/assets/f10af05a-ad05-4832-869e-e6d9f389dd83" />
+
+and then run the binary :
+
+<img width="1219" height="453" alt="image" src="https://github.com/user-attachments/assets/005ac0b0-ba2d-45e3-a2f2-cb51ea8acd59" />
+
+
+Looking at our debugger, we will see that the same assembly instructions in the debugger are in IDA :
+
+Debugger : 
+
+
+<img width="1790" height="767" alt="image" src="https://github.com/user-attachments/assets/a651f9cd-8650-4c5f-8b03-64a5b600ac9a" />
+
+IDA :
+
+<img width="741" height="614" alt="image" src="https://github.com/user-attachments/assets/65dd464d-39e7-4a42-b1c3-24653bfbf342" />
+
+
+This means we are at the right spot. Let me explain what We need to do now :
+
+- We are trying to check if we our input was taken into the driver or not, and what the register comparisons actually comapare, this will help us eventually develop the poc to escalate privileges.
+
+Since we know from IDA that the IOCTL condition for x64 will succeed, we can look forward and see that rax will hold 8, we need to watch what r9 will hold when we step forward through the instructions.
+
+To step forward : `p` in windbg :
+
+<img width="948" height="649" alt="image" src="https://github.com/user-attachments/assets/f2788501-0818-4f6a-ae67-5ae621cf08eb" />
+
+after steping forward enough :
+
+<img width="1916" height="824" alt="image" src="https://github.com/user-attachments/assets/7df8f3f0-cb34-4b53-8b13-0e65352a8f40" />
+
+R9 holds 10 ? what is 10 ? 
+
+Firstly, that's Hex 0x10, so 0x10 is actually the size 16 we passed, so r9 holds the size of the input buffer.
+
+This also means that to satisfy the condition, u need to make the size = 8
+
+1 more thing to note is that our input buffer is stored in rdi :
+
+<img width="614" height="269" alt="image" src="https://github.com/user-attachments/assets/02eebd01-122a-4ace-accf-07aaf54cfccc" />
+
+The following condition failed, but if we llok at r8, it's zero. 
+
+<img width="1834" height="781" alt="image" src="https://github.com/user-attachments/assets/e9d826d4-e1ca-445a-894f-3a804f13fae8" />
+
+Meaning that maybe we could try to add size to the output buffer.
+
+Let's add a variable that will store the out buffer and make it of size 4 according to the rsi register : RSI: 0000000000000004
+
+<img width="878" height="744" alt="image" src="https://github.com/user-attachments/assets/d3220d4b-46aa-44ea-86a0-346fdbc69e74" />
+
+Now that we added it, let's now run it and see how it looks in windbg :
+
+<img width="1808" height="637" alt="image" src="https://github.com/user-attachments/assets/8d2e652e-864f-4f53-ac5f-67084d445080" />
+
+**_Note that up to this point, we are trying to meet the checks in the binary._**
+
+Jumping to 0x60a, we see that our input buffer of "AABBCCDD" is now stored in rcx :
+
+<img width="1835" height="630" alt="image" src="https://github.com/user-attachments/assets/2524f7d4-1eb3-4239-9bb4-7d62d3f76bba" />
+
+Looking at IDA, we see that the same instruction leads to passing rcx to the function, so called sub_10524.
+
+Going into that function leads to the buffer of "AABBCCDD" 0x4444434342424141 being passed into rsp :
+
+<img width="863" height="405" alt="image" src="https://github.com/user-attachments/assets/7881f5a3-ac1e-4dfe-8434-5ba1f62a7859" />
+
+mov [rsp], rcx means we are copying 0x4444434342424141 to the address of rsp, meaning that rsp will point to 0x4444434342424141 which is an invalid address, leading to a crash, let's confirm by running the debugger :
 
 
