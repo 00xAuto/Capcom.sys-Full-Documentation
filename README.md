@@ -449,6 +449,8 @@ We have now achieved "Code execution", Because if we now press go, the system wi
 
 <img width="706" height="674" alt="image" src="https://github.com/user-attachments/assets/8bf467c3-d4fd-4f18-a477-1a3fdb99d27d" />
 
+## 0x03. Compromising the kernel! 
+
 Now is the best time to start working on the shellcode which will lead to a Local Privilege escalation.
 
 Recall from our POC that we have this line : `*(PULONG_PTR)(buffer) = (ULONG_PTR)(buffer + 8);`
