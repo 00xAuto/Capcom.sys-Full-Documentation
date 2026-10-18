@@ -182,6 +182,43 @@ Scrolling further down, we see that there are more checks and conditions :
 
 <img width="775" height="585" alt="image" src="https://github.com/user-attachments/assets/0d15270c-3234-45e0-8f53-97d98559716a" />
 
+Before we move on to Windbg, It's always good to look at all the functions since there isn't really alot of functions :
+
+<img width="387" height="179" alt="image" src="https://github.com/user-attachments/assets/deb67260-b58c-4187-9fb2-5f07bcdd6723" />
+
+We didn't take a look at what they really do, let's take a look :
+
+<img width="907" height="468" alt="image" src="https://github.com/user-attachments/assets/ea531ba4-4197-42ff-8ed0-8f63114461d0" />
+
+sub_10788 moves the cr4 register (which has our SMEP bit (20th bit)) into rax, then it stores the current value of rax which is cr4, into the memory address pointed to by the rcx. Then we have an "AND" gate between rax and 0FFFFFFFFFFEFFFFF. 
+
+If we are going to think about what the cr4 register looks like, it will look something like this :
+
+<img width="726" height="223" alt="image" src="https://github.com/user-attachments/assets/40d38fae-78cb-428a-884c-2cac62bcfbef" />
+
+The SMEP bit is the 21st bit in the CR4 register, 1 being enabled, 0 being disabled. Using some logic here from this hex : 0FFFFFFFFFFEFFFFF, i will only take the last 6 Characters just to explain what is actually happening in the driver : EFFFFF. F is hex is 1111 in binary. E in hex is 1110 in binary. What's actually happening is that the first 5 Fs are 20 bits, using AND gate with anything gives the original value, so 1 AND 0 is 0, 1 AND 1 is 1. And then comes the E bit. Since E 1110, so the 1st bit in "E" will be ANDing with the SMEP byte, being 1. 1 and 0 gives 0. Here is a visualized look on what's happening :
+
+```
+00000000 00000000 00000000 00000000 00000000 10110101 00001110 11111000 <-- CR4
+00000000 11111111 11111111 11111111 11111111 11101111 11111111 11111111 <-- The 0FFFFFFFFFFEFFFFF
+                                                |
+                                   Here, the 1 is the SMEP bit, and below it we see a 0, from the E "1110"
+                                   using the AND gate between 0 and 1 gives 0, hence disabling SMEP.
+```
+
+Hopefully this was clear enough to show that this function was about disabling SMEP. Let's name SMEP_Disable.
+
+Looking at the function below it, see that we are moving the value we stored earlier in rcx is now moved into rax. rcx has the original value of the cr4 register, meaning this restores the state of the CR4 register, hence enabling SMEP again :
+
+<img width="791" height="366" alt="image" src="https://github.com/user-attachments/assets/faf8b3f6-da77-405a-91df-f6345a67dcc8" />
+
+I will be naming it SMEP_Enable.
+
+Now when we look at our functions, we can easily tell which is which as shown :
+
+<img width="395" height="167" alt="image" src="https://github.com/user-attachments/assets/9034633b-9f55-4e23-a53b-b2800ea7c362" />
+
+
 Enough analyzing (for now). Let's start debugging and talking to the driver.
 
 ## 0x02. Windbg + Driver Communication
