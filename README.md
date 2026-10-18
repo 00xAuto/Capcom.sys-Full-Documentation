@@ -641,3 +641,8 @@ using my compiler `cl start.c` and transfering it to my victim, we spawn a syste
 
 <img width="518" height="320" alt="image" src="https://github.com/user-attachments/assets/1b267ddd-881f-4e54-a405-b392bac5df2b" />
 
+W00t! W00t!
+
+Hopefully you found this blog helpful, If you find any issues understanding stuff, considering DMing me.
+
+Until next time!
