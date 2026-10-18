@@ -7,7 +7,7 @@
 
 ----
 
-## Before we start
+## 0x00. Before we start
 
 A quick background story about this driver. It was first introduced in 2016 when Street Figter 5 was released, and part of the download was this driver, Capcom.sys. This driver disabled SMEP through it's IOCTL (Input/Output Control) codes, Which is the method to communicate with the driver. SMEP is Supervisor Execution prevention, and try to disable may cause some pain, since the to disable SMEP, you need to filp the bit in the CR4 register (more on that here https://connormcgarr.github.io/x64-Kernel-Shellcode-Revisited-and-SMEP-Bypass/) Which is in a nutshell, flipping the 20th Bit in the CR4 Register, which is responsible for the flags that enable processor feathers and indicate feature capabilities of the processor. Explaining it in more details is not in the scope of the blog.
 
@@ -33,7 +33,7 @@ I will also be analyzing it in Assembly, and i will try my best to explain what 
 
 ---
 
- ## 0x00. Analyzing the driver in IDA
+ ## 0x01. Analyzing the driver in IDA
 
 Loading the Capcom.sys into IDA, we are welcomed with this :
 
