@@ -1,6 +1,6 @@
 # Capcom.sys : The driver that disables SMEP.
 
-- I tried my best to make the poc as simple as possible, it's no more than 40 lines. Could be found here.
+- I tried my best to make the poc as simple as possible, it's no more than 40 lines. Could be found [poc.c](https://github.com/00xAuto/Capcom.sys-Full-Documentation/blob/main/poc.c).
 - I am still a student, mistakes are possible.
 - This blog was made possible through this video : https://www.youtube.com/watch?v=pJZjWXxUEl4&t=6844s for OJ Reeves. Consider taking a look over there. Fuzz Security also has a great article about it providing 1 more video as a part 2 of the original video. I will try my best here to include everything to make understanding it easier and less time consuming, because OJ Reeve's video was 2 hours (which again, i recommend watching).
 
