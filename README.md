@@ -400,12 +400,43 @@ Since we know that a function should be pointing 8 bytes backwards, I will point
 
 Let's take a look on how that will look like :
 
-<img width="928" height="820" alt="image" src="https://github.com/user-attachments/assets/95bbda2c-c9e3-4c39-8cb6-d18fda2451fc" />
+<img width="1191" height="557" alt="image" src="https://github.com/user-attachments/assets/5f8055d6-b78c-484c-813e-47fb1d061476" />
 
 *(uint64_t) is initalizing pointer, where the uint64_t itself is a 64 bit (or 8 bytes) version of the traditional int.
 This can be imported using the `stdint.h` library like this : `#include <stdint.h>`.
 
 Running the in the victim machine with our new breakpoint set to Capcom+0x524, which is where the rcx register is being moved into rsp (at 0x524) :
+
+
+<img width="1704" height="599" alt="image" src="https://github.com/user-attachments/assets/d14365d8-222c-4ac4-9fac-c4ed74678cfc" />
+
+We officially control the RCX register and will now be pased into the rsp register, we can see that by stepping into the next instruction using 'p' :
+
+<img width="1712" height="628" alt="image" src="https://github.com/user-attachments/assets/91a9283c-e22e-49ef-92b0-befce583a116" />
+
+Let's now try to execute something.
+
+We can test with NOPs or 0xCC (which means a breakpoint) by just changing the (buffer + 8) value to something like 0xCC90CC90CC90CC90 :
+
+<img width="861" height="125" alt="image" src="https://github.com/user-attachments/assets/9578d670-84e4-424f-b41b-a774c9805f37" />
+
+Now that we can see that our data is there, we notice that once we are at +0x537, windows crashes. And this is because the comparsion at Capcom+0x537 is returning false, which if it is false, rax is set to 0, and the program exits with the return value of 1, meaning that it has failed.
+
+It would be great if u realized it, but the reason why the comparsion is failing, is because we are passing the buffer without without telling the program where it actually resides. Although this may sound unclear, in C++/C terms, we need to pass in the buffer as pointer, something that looks like this : `&buffer`.
+
+To do that, we will first need to set our `buffer+8` to a variable that is also a ULONG, then pass that variable as a pointer in the DeviceIoControl API :
+
+<img width="1107" height="271" alt="image" src="https://github.com/user-attachments/assets/a8bf79cc-e9fb-43e8-bdbc-527dd8d4c9db" />
+
+We have passed the cmp instruction :
+
+<img width="1890" height="597" alt="image" src="https://github.com/user-attachments/assets/e5dffe8e-72e8-4c3a-8487-985d3707ccd0" />
+
+We should now keep stepping instructions until we reach the call instruction without any issues, the one being the call to our input (Which according to the image is now in rsp var_20) :
+
+<img width="819" height="381" alt="image" src="https://github.com/user-attachments/assets/d2a124eb-6068-43d1-8aad-fd78671fc1ce" />
+
+The call instruction being `call rax` which will call and execute our "shellcode" :
 
 
 
