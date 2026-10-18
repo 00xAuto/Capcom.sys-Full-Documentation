@@ -1,4 +1,4 @@
-# Capcom.sys : The driver that disables SMEP.
+<img width="948" height="69" alt="image" src="https://github.com/user-attachments/assets/a4a17b5a-ef86-4e93-bae0-56e53be60e91" /># Capcom.sys : The driver that disables SMEP.
 
 - I tried my best to make the poc as simple as possible, it's no more than 40 lines. Could be found here.
 - I am still a student, mistakes are possible.
@@ -351,5 +351,62 @@ Going into that function leads to the buffer of "AABBCCDD" 0x4444434342424141 be
 <img width="863" height="405" alt="image" src="https://github.com/user-attachments/assets/7881f5a3-ac1e-4dfe-8434-5ba1f62a7859" />
 
 mov [rsp], rcx means we are copying 0x4444434342424141 to the address of rsp, meaning that rsp will point to 0x4444434342424141 which is an invalid address, leading to a crash, let's confirm by running the debugger :
+
+<img width="786" height="265" alt="image" src="https://github.com/user-attachments/assets/8cdd8b30-991b-4ca9-a909-05d58549f541" />
+
+
+Pressing "Go" or "g" in the command line, We experience the best event throughout windows exploitation journey, a BSOD (Blue Screen Of Death) : 
+
+<img width="957" height="507" alt="image" src="https://github.com/user-attachments/assets/fb47f87b-1de6-4b83-ae1b-cd9ba0f209f9" />
+
+Now, we have the following information :
+
+- r8 is trhe size of output
+- r9 is the size of input
+- rdi stores our input buffer until it's passed to rcx then rsp
+- r10 stores our x64 IOCTL.
+
+With all that in mind, we can construct shellcode that will help us escalate to SYSTEM.
+
+Let's anaylze the function that moves the value in rcx to rsp :
+
+<img width="722" height="381" alt="image" src="https://github.com/user-attachments/assets/e94e61b1-cd0a-4c61-881f-8fb95ac907e7" />
+
+If we look closely, we will nkow know that arg_0 is our input.
+Going downwards we see that there is a comparsion happening between rcx and rax - 0x8 (8 bytes before the current state of rax). 
+So it's basically saying, make sure that the current function (rcx) is pointing to 8 bytes before the current function of rax. And if it's not the case, the die :
+
+<img width="739" height="261" alt="image" src="https://github.com/user-attachments/assets/2ccda47d-e714-47d6-9671-5fe511590663" />
+
+I am not really sure why this happens. It was really weird that this driver came with the game.
+
+So for our case, we will make our input buffer a pointer to a byte and we will allocate virtual memory using the VirtualAlloc API which we will use to store out shellcode, but first, let's use it :
+
+https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc
+
+<img width="775" height="251" alt="image" src="https://github.com/user-attachments/assets/74c28bdb-1f8c-4a20-81f9-6c5cd3f68990" />
+
+- lpAddresso is the desired Memory address of the allocated memory chunk, which in our case, will be NULL. Meaning the system will automatically allocated it for us.
+- SIZE_T is the desired size of the buffer, which i will be storing as sizeof(inBuffer) for instance
+- flAllocationType is the type of memory allocation we want use. I will be using MEM_COMMIT | MEM_RESERVE. Where the "MEM_COMMIT" will allocate physical storage in memory or the disk paging file for a specified region of pages, and "MEM_RESERVE" will reserve a range of process Virtual addresses for our chunk.
+- flProtect basically asks you whether you want your allocated memory chunk to be READ, WRITE, EXECUTE, 2 of them or all of them, for my case, our shellcode will execute, so we will allocate a PAGE_EXECUTE_READWRITE.
+
+Since our shellcode will be a pointer to byte, which looks like this -> PBYTE :
+
+<img width="948" height="69" alt="image" src="https://github.com/user-attachments/assets/b1d11d9f-9062-4b87-a395-0042a3175d51" />
+
+Where the variable "t" in the sizeof will be our shellcode we are going to create in mintue, for now, let's change sizeof(t) to 24.
+Since we know that a function should be pointing 8 bytes backwards, I will point the input buffer 8 bytes forward (If u recall the IDA disassembly, we are putting out selves in a the position of rax). Then, I will be initializing the 8 bytes after rax to our desired value (I will first test it with A's to prove the it works).
+
+Let's take a look on how that will look like :
+
+<img width="928" height="820" alt="image" src="https://github.com/user-attachments/assets/95bbda2c-c9e3-4c39-8cb6-d18fda2451fc" />
+
+*(uint64_t) is initalizing pointer, where the uint64_t itself is a 64 bit (or 8 bytes) version of the traditional int.
+This can be imported using the `stdint.h` library like this : `#include <stdint.h>`.
+
+Running the in the victim machine with our new breakpoint set to Capcom+0x524, which is where the rcx register is being moved into rsp (at 0x524) :
+
+
 
 
